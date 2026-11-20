@@ -1,0 +1,12 @@
+# .dockerignore — что НЕ копировать в образ при сборке (как .gitignore, только для Docker)
+# виртуальное окружение Windows — в образе свои библиотеки под Linux
+.venv
+__pycache__
+.pytest_cache
+.git
+.github
+# тесты в работающем приложении не нужны (они запускаются в GitHub Actions)
+tests
+# локальные базы SQLite
+*.db
+.env

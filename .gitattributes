@@ -1,0 +1,7 @@
+# .gitattributes — для этих файлов git всегда хранит и выдаёт переносы строк LF (как в Linux).
+# Иначе на Windows git превратил бы их в CRLF, и в Linux-контейнере значения из .env.docker
+# получили бы лишний невидимый символ  в конце.
+Dockerfile text eol=lf
+.env.docker text eol=lf
+docker-compose.yml text eol=lf
+*.yml text eol=lf

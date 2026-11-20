@@ -1,8 +1,62 @@
-# docker-compose.yml (КТ 5): Redis — брокер и хранилище результатов Celery.
-# Порт 6380 на компьютере (6379 занят Redis другого проекта). Запуск: docker compose up -d
-# В КТ 6 сюда добавятся само приложение, PostgreSQL и воркер.
+# =====================================================================
+# docker-compose.yml — ВСЁ ОКРУЖЕНИЕ ОДНОЙ КОМАНДОЙ (критерий 2)
+# ---------------------------------------------------------------------
+#   docker compose up --build   — собрать образ и запустить 4 сервиса
+#   docker compose ps           — что запущено
+#   docker compose logs app     — логи API (worker — логи воркера)
+#   docker compose down         — остановить (данные базы в томе СОХРАНЯЮТСЯ)
+# Требование «минимум три сервиса»: app, db, redis + четвёртый — worker (воркер Celery из КТ 5)
+# =====================================================================
+
 services:
-  redis:
+  app:                                   # API на FastAPI
+    build: .                             # собрать образ по Dockerfile из этой папки
+    env_file: .env.docker                # переменные окружения (адреса по именам сервисов)
+    ports:
+      - "8000:8000"                      # http://localhost:8000 на компьютере -> порт 8000 в контейнере
+    depends_on:                          # запускать только после того, как
+      db:
+        condition: service_healthy       #   PostgreSQL реально готов принимать подключения
+      redis:
+        condition: service_healthy       #   и Redis отвечает
+    restart: unless-stopped              # упал — перезапустить
+
+  worker:                                # воркер Celery — выполняет фоновые задачи
+    build: .                             # тот же образ, что и app
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=2
+                                         # другая команда запуска; в Linux --pool=solo не нужен,
+                                         # --concurrency=2 — две задачи одновременно
+    env_file: .env.docker
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:                                    # PostgreSQL
+    image: postgres:16-alpine            # готовый образ, собирать не нужно
+    env_file: .env.docker                # отсюда берутся POSTGRES_USER / PASSWORD / DB
+    volumes:
+      - postgres-data:/var/lib/postgresql/data   # данные в томе — переживают down/up
+    healthcheck:                         # как проверить, что база готова
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+                                         # $$ — чтобы переменную подставил shell внутри контейнера
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:                                 # Redis — брокер и хранилище результатов Celery
     image: redis:7-alpine
     ports:
-      - "6380:6379"
+      - "6380:6379"                      # доступ с компьютера — для локальной разработки (КТ 5)
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"] # Redis ответит PONG — значит, готов
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres-data:                         # именованный том: Docker хранит его отдельно от контейнеров
