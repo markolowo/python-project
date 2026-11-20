@@ -1,0 +1,8 @@
+# docker-compose.yml (КТ 5): Redis — брокер и хранилище результатов Celery.
+# Порт 6380 на компьютере (6379 занят Redis другого проекта). Запуск: docker compose up -d
+# В КТ 6 сюда добавятся само приложение, PostgreSQL и воркер.
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"

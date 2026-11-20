@@ -8,6 +8,18 @@
 # login отправляет data=... (форма), а не json=... — так требует OAuth2PasswordRequestForm.
 # =====================================================================
 
+# КТ 5: настройки Celery для тестов задаются ДО импорта приложения (app.config читает их при импорте):
+#   memory://          — брокер в памяти, Redis не нужен
+#   cache+memory://    — результаты тоже в памяти
+#   ALWAYS_EAGER=true  — задача выполняется сразу при .delay(), без воркера
+#   RECEIPT_SECONDS=0  — тесты не ждут 5 секунд
+import os
+
+os.environ["CELERY_BROKER_URL"] = "memory://"
+os.environ["CELERY_RESULT_BACKEND"] = "cache+memory://"
+os.environ["CELERY_TASK_ALWAYS_EAGER"] = "true"
+os.environ["RECEIPT_SECONDS"] = "0"
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker

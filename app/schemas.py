@@ -123,5 +123,15 @@ class OrderOfProduct(BaseModel):
     user: User
 
 
+# КТ 5: ответ о фоновой задаче — id, статус и результат (только когда готово)
+class TaskInfo(BaseModel):
+    task_id: str = Field(description="id фоновой задачи Celery — по нему проверяется статус.", examples=["3f2b9c1e-..."])
+    status: str = Field(
+        description="PENDING — ждёт или неизвестна, STARTED — выполняется, SUCCESS — готово, FAILURE — ошибка.",
+        examples=["PENDING"],
+    )
+    result: dict | None = Field(default=None, description="Результат задачи — только при статусе SUCCESS.")
+
+
 class ErrorResponse(BaseModel):
     detail: str = Field(description="Описание ошибки.", examples=["Товар не найден"])

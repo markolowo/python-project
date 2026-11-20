@@ -21,3 +21,13 @@ LOGIN_RATE_LIMIT = os.environ.get("LOGIN_RATE_LIMIT", "5/minute")
 
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@example.com")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin12345")
+
+# ---- КТ 5: Celery ----
+# Брокер — «почтовый ящик» задач: FastAPI кладёт туда задачу, воркер забирает. Redis, база №0
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6380/0")
+# Хранилище результатов: сюда воркер пишет статус и результат, оттуда их читает GET /tasks/{id}. Redis, база №1
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6380/1")
+# true — выполнять задачи сразу, без воркера (только для тестов, см. tests/conftest.py)
+CELERY_TASK_ALWAYS_EAGER = os.environ.get("CELERY_TASK_ALWAYS_EAGER", "false") == "true"
+# Сколько секунд «отправляется» письмо — имитация долгой операции (в тестах 0)
+RECEIPT_SECONDS = float(os.environ.get("RECEIPT_SECONDS", "5"))
