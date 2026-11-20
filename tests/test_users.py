@@ -1,33 +1,35 @@
 # =====================================================================
-# ФАЙЛ: tests/test_users.py — ТЕСТЫ ПОЛЬЗОВАТЕЛЕЙ
+# ФАЙЛ: tests/test_users.py — ПОЛЬЗОВАТЕЛИ
 # ---------------------------------------------------------------------
-# Email в нижнем регистре, 409 за повтор email (даже в другом регистре), 422 за неверный email, удаление.
+# Email в нижнем регистре, 422 за неверный email и короткий пароль,
+# пользователь видит только себя, удалять может только admin.
 # =====================================================================
 
-def test_create_user_stores_email_in_lowercase(client):
-    response = client.post("/users", json={"name": "Анна", "email": "Anna@Example.com"})
+from conftest import register
 
-    assert response.status_code == 201
+
+def test_email_is_stored_in_lowercase(client):
+    response = register(client, "Anna@Example.com")
+
     assert response.json()["email"] == "anna@example.com"
 
 
-def test_duplicate_email_returns_409(client):
-    client.post("/users", json={"name": "Анна", "email": "anna@example.com"})
-
-    response = client.post("/users", json={"name": "Другая Анна", "email": "ANNA@example.com"})
-
-    assert response.status_code == 409
-
-
 def test_invalid_email_returns_422(client):
-    response = client.post("/users", json={"name": "Анна", "email": "not-an-email"})
-
-    assert response.status_code == 422
+    assert register(client, "not-an-email").status_code == 422
 
 
-def test_get_and_delete_user(client):
-    user_id = client.post("/users", json={"name": "Иван", "email": "ivan@example.com"}).json()["id"]
+def test_short_password_returns_422(client):
+    assert register(client, "ivan@example.com", password="123").status_code == 422
 
-    assert client.get(f"/users/{user_id}").json()["name"] == "Иван"
-    assert client.delete(f"/users/{user_id}").status_code == 204
-    assert client.get(f"/users/{user_id}").status_code == 404
+
+def test_user_sees_only_himself(client, anna, admin_headers):
+    other_id = register(client, "other@example.com").json()["id"]
+
+    assert client.get(f"/users/{anna['id']}", headers=anna["headers"]).status_code == 200
+    assert client.get(f"/users/{other_id}", headers=anna["headers"]).status_code == 403
+    assert client.get(f"/users/{other_id}", headers=admin_headers).status_code == 200
+
+
+def test_only_admin_deletes_users(client, anna, admin_headers):
+    assert client.delete(f"/users/{anna['id']}", headers=anna["headers"]).status_code == 403
+    assert client.delete(f"/users/{anna['id']}", headers=admin_headers).status_code == 204

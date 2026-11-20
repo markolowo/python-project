@@ -1,10 +1,10 @@
 # =====================================================================
-# ФАЙЛ: app/routers/products.py — ТОВАРЫ (теперь в базе)
+# ФАЙЛ: app/routers/products.py — ТОВАРЫ (с правами)
 # ---------------------------------------------------------------------
-# Вместо словаря — запросы SQLAlchemy: select(Product).where(...) собирает SQL по частям.
-# ilike — поиск подстроки без учёта регистра. func.count — сколько найдено.
-# Новое: GET /products/{id}/orders — связь многие-ко-многим в ОБРАТНУЮ сторону (товар -> заказы -> покупатель).
-# Все запросы через ORM — значения передаются параметрами, SQL-инъекция невозможна.
+# Смотреть каталог может любой (без токена). Создавать, менять и удалять товары — только admin:
+#   dependencies=[Depends(admin_only)] — без токена 401, с токеном роли user -> 403 (пункт 5).
+# Все запросы — через SQLAlchemy ORM: значения передаются параметрами, SQL-инъекция невозможна (пункт 8).
+# Даже поиск: Product.name.ilike(f"%{search}%") — строка уходит в базу ПАРАМЕТРОМ, а не вклеивается в SQL.
 # =====================================================================
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -12,7 +12,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_session
-from app.models import Product
+from app.dependencies import require_role
+from app.models import Product, UserRole
 from app.schemas import ErrorResponse, OrderOfProduct, ProductCreate, ProductList, ProductUpdate
 from app.schemas import Product as ProductSchema
 
@@ -20,6 +21,12 @@ router = APIRouter(prefix="/products", tags=["Товары"])
 
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Товар не найден"}}
 NAME_TAKEN = {409: {"model": ErrorResponse, "description": "Товар с таким названием уже есть"}}
+ADMIN_ERRORS = {
+    401: {"model": ErrorResponse, "description": "Нет токена или он недействителен"},
+    403: {"model": ErrorResponse, "description": "Только для администратора"},
+}
+
+admin_only = require_role(UserRole.ADMIN)
 
 
 def find_product(session, product_id):
@@ -95,8 +102,9 @@ def get_product_orders(product_id: int, session: Session = Depends(get_session))
     "",
     response_model=ProductSchema,
     status_code=status.HTTP_201_CREATED,
-    responses=NAME_TAKEN,
-    summary="Создать товар",
+    responses={**NAME_TAKEN, **ADMIN_ERRORS},
+    summary="Создать товар (только admin)",
+    dependencies=[Depends(admin_only)],
     description=(
         "Добавляет товар в каталог. Название должно быть **уникальным без учёта регистра**: "
         "если уже есть «Ноутбук», то «НОУТБУК» создать нельзя — вернётся 409. "
@@ -114,8 +122,9 @@ def create_product(data: ProductCreate, session: Session = Depends(get_session))
 @router.patch(
     "/{product_id}",
     response_model=ProductSchema,
-    responses={**NOT_FOUND, **NAME_TAKEN},
-    summary="Частично изменить товар",
+    responses={**NOT_FOUND, **NAME_TAKEN, **ADMIN_ERRORS},
+    summary="Частично изменить товар (только admin)",
+    dependencies=[Depends(admin_only)],
     description=(
         "Меняет только переданные поля, остальные остаются прежними. "
         "При смене названия проверяется уникальность среди **других** товаров."
@@ -137,8 +146,9 @@ def update_product(product_id: int, data: ProductUpdate, session: Session = Depe
 @router.delete(
     "/{product_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    responses=NOT_FOUND,
-    summary="Удалить товар",
+    responses={**NOT_FOUND, **ADMIN_ERRORS},
+    summary="Удалить товар (только admin)",
+    dependencies=[Depends(admin_only)],
 )
 def delete_product(product_id: int, session: Session = Depends(get_session)):
     session.delete(find_product(session, product_id))

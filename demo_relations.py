@@ -1,11 +1,7 @@
 # =====================================================================
-# ФАЙЛ: demo_relations.py — ПУНКТЫ 3 И 4 ЗАДАНИЯ: ДАННЫЕ И ЧТЕНИЕ В ОБЕ СТОРОНЫ
+# ФАЙЛ: demo_relations.py — ДЕМО СВЯЗЕЙ (из КТ 3)
 # ---------------------------------------------------------------------
-# Запуск: python demo_relations.py
-# Создаёт отдельную базу demo_relations.db (каждый раз заново) и в ней через код:
-#   1 пользователь, 3 товара, 2 заказа; «Мышь» входит в ОБА заказа (пересечение по товару)
-# Затем читает связи четырьмя способами:
-#   пользователь -> заказы, заказ -> пользователь, заказ -> товары, товар -> заказы
+# В КТ 4 у пользователя обязателен hashed_password, поэтому демо-пользователь создаётся с паролем.
 # =====================================================================
 
 from pathlib import Path
@@ -15,22 +11,21 @@ from sqlalchemy.orm import Session
 
 from app.database import Base, make_engine
 from app.models import Order, Product, User
+from app.security import hash_password
 
 DEMO_DATABASE = Path(__file__).parent / "demo_relations.db"
 
 
 def create_data(session):
-    user = User(name="Иван Петров", email="ivan@example.com")
+    user = User(name="Иван Петров", email="ivan@example.com", hashed_password=hash_password("demo12345"))
 
     laptop = Product(name="Ноутбук", price=75000, category="electronics", stock=5)
     mouse = Product(name="Мышь", price=1500, category="electronics", stock=40)
     bag = Product(name="Сумка для ноутбука", price=3000, category="clothing", stock=12)
 
-    # Связи задаются просто как атрибуты: user=..., products=[...]
     first_order = Order(user=user, products=[laptop, mouse])
     second_order = Order(user=user, products=[mouse, bag])
 
-    # Сумма заказа = сумма цен его товаров
     for order in [first_order, second_order]:
         order.total_price = sum(product.price for product in order.products)
 

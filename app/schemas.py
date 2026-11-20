@@ -1,11 +1,12 @@
 # =====================================================================
-# ФАЙЛ: app/schemas.py — МОДЕЛИ PYDANTIC (что приходит в запросе и что уходит в ответе)
+# ФАЙЛ: app/schemas.py — МОДЕЛИ PYDANTIC
 # ---------------------------------------------------------------------
-# FastAPI по этим моделям: 1) проверяет входящий JSON (ошибка -> 422), 2) рисует схемы в /docs.
-# Пункт 6 задания: Field(description=..., examples=[...]) — описание и пример значения поля.
-# Описаны и с примерами: name, price, category, stock (товар), name, email (пользователь), id, total, detail.
-# Ограничения: min_length/max_length — длина строки, gt=0 — строго больше нуля, ge=0 — не меньше нуля,
-# pattern — регулярное выражение (только одна из 4 категорий).
+# Товары — как в КТ 2. Новое в КТ 4:
+#   UserRegister — данные регистрации: name, email (EmailStr проверяет формат), password 8–72 символа
+#     (72 — предел алгоритма bcrypt)
+#   User — ответ о пользователе: id, name, email, role. Пароля и хэша в ответе НЕТ
+#   Token — ответ входа: access_token + token_type="bearer" (формат OAuth2)
+#   OrderCreate — теперь только product_ids: покупатель берётся из токена
 # =====================================================================
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -38,7 +39,6 @@ class ProductCreate(BaseModel):
     )
 
 
-# Для PATCH: все поля необязательные (None по умолчанию) — меняем только присланные
 class ProductUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=100, examples=["Ноутбук Lenovo IdeaPad 5 Pro"])
     price: float | None = Field(default=None, gt=0, examples=[59990.0])
@@ -46,7 +46,6 @@ class ProductUpdate(BaseModel):
     stock: int | None = Field(default=None, ge=0, examples=[5])
 
 
-# Ответ = поля создания + id. Наследование: Product получает все поля ProductCreate
 class Product(ProductCreate):
     model_config = ConfigDict(from_attributes=True)
 
@@ -58,7 +57,7 @@ class ProductList(BaseModel):
     total: int = Field(description="Сколько всего товаров подходит под фильтры (без учёта пагинации).", examples=[42])
 
 
-class UserCreate(BaseModel):
+class UserRegister(BaseModel):
     name: str = Field(
         min_length=2,
         max_length=100,
@@ -66,29 +65,39 @@ class UserCreate(BaseModel):
         examples=["Анна Петрова"],
     )
     email: EmailStr = Field(
-        description="Электронная почта. Должна быть уникальной: второй пользователь с той же почтой не создаётся.",
+        description="Электронная почта, она же логин. Должна быть уникальной: повторная регистрация вернёт 409.",
         examples=["anna@example.com"],
+    )
+    password: str = Field(
+        min_length=8,
+        max_length=72,
+        description="Пароль от 8 до 72 символов. Хранится только в виде хэша bcrypt.",
+        examples=["secret123"],
     )
 
 
-class User(UserCreate):
+class User(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int = Field(description="Уникальный номер пользователя.", examples=[1])
+    name: str = Field(examples=["Анна Петрова"])
+    email: str = Field(examples=["anna@example.com"])
+    role: str = Field(description="Роль: user или admin.", examples=["user"])
 
 
-# ---- КТ 3: заказы ----
-# OrderCreate — что присылает клиент: кто покупает и какие товары (min_length=1 — хотя бы один)
+class Token(BaseModel):
+    access_token: str = Field(description="JWT. Передаётся в заголовке Authorization: Bearer <токен>.")
+    token_type: str = Field(default="bearer", examples=["bearer"])
+
+
 class OrderCreate(BaseModel):
-    user_id: int = Field(description="Кто оформляет заказ (id пользователя).", examples=[1])
     product_ids: list[int] = Field(
         min_length=1,
-        description="id товаров в заказе, без повторов. Сумма заказа считается автоматически.",
+        description="id товаров в заказе, без повторов. Покупатель — вошедший пользователь, сумма считается автоматически.",
         examples=[[1, 2]],
     )
 
 
-# Товар внутри заказа — только id, название и цена
 class ProductInOrder(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -97,7 +106,6 @@ class ProductInOrder(BaseModel):
     price: float
 
 
-# Заказ в ответе. from_attributes=True — Pydantic умеет читать объекты SQLAlchemy (order.products и т.д.)
 class Order(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -107,7 +115,6 @@ class Order(BaseModel):
     products: list[ProductInOrder]
 
 
-# Заказ, показанный со стороны товара: с покупателем (user)
 class OrderOfProduct(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -116,6 +123,5 @@ class OrderOfProduct(BaseModel):
     user: User
 
 
-# Формат ошибки (так отвечает HTTPException) — нужен, чтобы ошибки 404/409 были описаны в /docs
 class ErrorResponse(BaseModel):
     detail: str = Field(description="Описание ошибки.", examples=["Товар не найден"])
