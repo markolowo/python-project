@@ -1,18 +1,20 @@
 # =====================================================================
-# ФАЙЛ: app/routers/products.py — ЭНДПОИНТЫ ТОВАРОВ (тег «Товары»)
+# ФАЙЛ: app/routers/products.py — ТОВАРЫ (теперь в базе)
 # ---------------------------------------------------------------------
-# APIRouter(prefix="/products", tags=["Товары"]) — все маршруты файла начинаются с /products
-# и попадают в группу «Товары» (пункт 3).
-# У каждого маршрута summary — короткое название в списке /docs (пункт 4).
-# description — подробное объяснение там, где логика неочевидна (пункт 5): фильтры, уникальность названия, PATCH.
-# responses={404: ...} — описать в документации возможные ошибки.
-# HTTPException — вернуть клиенту ошибку с кодом и текстом (404 не найдено, 409 конфликт).
+# Вместо словаря — запросы SQLAlchemy: select(Product).where(...) собирает SQL по частям.
+# ilike — поиск подстроки без учёта регистра. func.count — сколько найдено.
+# Новое: GET /products/{id}/orders — связь многие-ко-многим в ОБРАТНУЮ сторону (товар -> заказы -> покупатель).
+# Все запросы через ORM — значения передаются параметрами, SQL-инъекция невозможна.
 # =====================================================================
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
-from app import storage
-from app.schemas import ErrorResponse, Product, ProductCreate, ProductList, ProductUpdate
+from app.database import get_session
+from app.models import Product
+from app.schemas import ErrorResponse, OrderOfProduct, ProductCreate, ProductList, ProductUpdate
+from app.schemas import Product as ProductSchema
 
 router = APIRouter(prefix="/products", tags=["Товары"])
 
@@ -20,18 +22,19 @@ NOT_FOUND = {404: {"model": ErrorResponse, "description": "Товар не на�
 NAME_TAKEN = {409: {"model": ErrorResponse, "description": "Товар с таким названием уже есть"}}
 
 
-def find_product(product_id):
-    product = storage.products.get(product_id)
+def find_product(session, product_id):
+    product = session.get(Product, product_id)
     if product is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Товар не найден")
     return product
 
 
-# Проверка уникальности названия без учёта регистра. except_id — не сравнивать товар с самим собой (для PATCH)
-def ensure_name_is_free(name, except_id=None):
-    for product in storage.products.values():
-        if product["name"].lower() == name.lower() and product["id"] != except_id:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Товар с таким названием уже есть")
+def ensure_name_is_free(session, name, except_id=None):
+    query = select(Product).where(func.lower(Product.name) == name.lower())
+    if except_id is not None:
+        query = query.where(Product.id != except_id)
+    if session.scalar(query) is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Товар с таким названием уже есть")
 
 
 @router.get(
@@ -53,31 +56,44 @@ def list_products(
     search: str | None = Query(default=None, min_length=1, description="Часть названия"),
     skip: int = Query(default=0, ge=0, description="Сколько товаров пропустить"),
     limit: int = Query(default=10, ge=1, le=100, description="Сколько товаров вернуть (1–100)"),
+    session: Session = Depends(get_session),
 ):
-    # Начинаем со всех товаров и по очереди применяем фильтры, которые прислали (логика «И»)
-    found = list(storage.products.values())
+    query = select(Product)
 
     if category is not None:
-        found = [product for product in found if product["category"] == category]
+        query = query.where(Product.category == category)
     if min_price is not None:
-        found = [product for product in found if product["price"] >= min_price]
+        query = query.where(Product.price >= min_price)
     if max_price is not None:
-        found = [product for product in found if product["price"] <= max_price]
+        query = query.where(Product.price <= max_price)
     if search is not None:
-        found = [product for product in found if search.lower() in product["name"].lower()]
+        query = query.where(Product.name.ilike(f"%{search}%"))
 
-    # Срез [skip:skip+limit] — пагинация; total — сколько найдено ДО пагинации
-    return {"items": found[skip:skip + limit], "total": len(found)}
+    total = session.scalar(select(func.count()).select_from(query.subquery()))
+    items = session.scalars(query.order_by(Product.id).offset(skip).limit(limit)).all()
+
+    return {"items": items, "total": total}
 
 
-@router.get("/{product_id}", response_model=Product, responses=NOT_FOUND, summary="Получить товар по id")
-def get_product(product_id: int):
-    return find_product(product_id)
+@router.get("/{product_id}", response_model=ProductSchema, responses=NOT_FOUND, summary="Получить товар по id")
+def get_product(product_id: int, session: Session = Depends(get_session)):
+    return find_product(session, product_id)
+
+
+@router.get(
+    "/{product_id}/orders",
+    response_model=list[OrderOfProduct],
+    responses=NOT_FOUND,
+    summary="Заказы, в которые входит товар",
+    description="Связь многие-ко-многим в обратную сторону: от товара к заказам (и их покупателям).",
+)
+def get_product_orders(product_id: int, session: Session = Depends(get_session)):
+    return find_product(session, product_id).orders
 
 
 @router.post(
     "",
-    response_model=Product,
+    response_model=ProductSchema,
     status_code=status.HTTP_201_CREATED,
     responses=NAME_TAKEN,
     summary="Создать товар",
@@ -87,17 +103,17 @@ def get_product(product_id: int):
         "Если `stock` не передан, товар создаётся с нулевым остатком."
     ),
 )
-def create_product(data: ProductCreate):
-    ensure_name_is_free(data.name)
-    product_id = storage.next_id("product")
-    product = {"id": product_id, **data.model_dump()}
-    storage.products[product_id] = product
+def create_product(data: ProductCreate, session: Session = Depends(get_session)):
+    ensure_name_is_free(session, data.name)
+    product = Product(**data.model_dump())
+    session.add(product)
+    session.commit()
     return product
 
 
 @router.patch(
     "/{product_id}",
-    response_model=Product,
+    response_model=ProductSchema,
     responses={**NOT_FOUND, **NAME_TAKEN},
     summary="Частично изменить товар",
     description=(
@@ -105,15 +121,16 @@ def create_product(data: ProductCreate):
         "При смене названия проверяется уникальность среди **других** товаров."
     ),
 )
-def update_product(product_id: int, data: ProductUpdate):
-    product = find_product(product_id)
-    # exclude_unset — только поля, которые клиент прислал; exclude_none — игнорировать null
+def update_product(product_id: int, data: ProductUpdate, session: Session = Depends(get_session)):
+    product = find_product(session, product_id)
     changes = data.model_dump(exclude_unset=True, exclude_none=True)
 
     if "name" in changes:
-        ensure_name_is_free(changes["name"], except_id=product_id)
+        ensure_name_is_free(session, changes["name"], except_id=product_id)
 
-    product.update(changes)
+    for field, value in changes.items():
+        setattr(product, field, value)
+    session.commit()
     return product
 
 
@@ -123,6 +140,6 @@ def update_product(product_id: int, data: ProductUpdate):
     responses=NOT_FOUND,
     summary="Удалить товар",
 )
-def delete_product(product_id: int):
-    find_product(product_id)
-    del storage.products[product_id]
+def delete_product(product_id: int, session: Session = Depends(get_session)):
+    session.delete(find_product(session, product_id))
+    session.commit()

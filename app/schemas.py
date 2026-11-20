@@ -77,6 +77,45 @@ class User(UserCreate):
     id: int = Field(description="Уникальный номер пользователя.", examples=[1])
 
 
+# ---- КТ 3: заказы ----
+# OrderCreate — что присылает клиент: кто покупает и какие товары (min_length=1 — хотя бы один)
+class OrderCreate(BaseModel):
+    user_id: int = Field(description="Кто оформляет заказ (id пользователя).", examples=[1])
+    product_ids: list[int] = Field(
+        min_length=1,
+        description="id товаров в заказе, без повторов. Сумма заказа считается автоматически.",
+        examples=[[1, 2]],
+    )
+
+
+# Товар внутри заказа — только id, название и цена
+class ProductInOrder(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    price: float
+
+
+# Заказ в ответе. from_attributes=True — Pydantic умеет читать объекты SQLAlchemy (order.products и т.д.)
+class Order(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    total_price: float = Field(description="Сумма цен товаров на момент оформления.", examples=[79500.0])
+    user_id: int
+    products: list[ProductInOrder]
+
+
+# Заказ, показанный со стороны товара: с покупателем (user)
+class OrderOfProduct(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    total_price: float
+    user: User
+
+
 # Формат ошибки (так отвечает HTTPException) — нужен, чтобы ошибки 404/409 были описаны в /docs
 class ErrorResponse(BaseModel):
     detail: str = Field(description="Описание ошибки.", examples=["Товар не найден"])
